@@ -2,8 +2,6 @@
 #pragma once //so that each header is only imported once
 #include <Arduino.h>
 #include <AccelStepper.h>
-//#include "stepperfuckinghoming.ino"
-
 
 class Joint
 {
@@ -71,7 +69,14 @@ public:
         delay(500);
     }
     stepper.setSpeed(-500 * 2);
-    while (digitalRead(EstopPin) != EstopOnState) { //Normal homing routine
+    while (true) { //Normal homing routine
+      if (digitalRead(EstopPin) == EstopOnState) { // Checks switch 2 times to counter interferance
+        delayMicroseconds(500);
+        if (digitalRead(EstopPin) == EstopOnState) {
+          break;
+        }
+      }
+      stepper.runSpeed();
       stepper.runSpeed();
     }
 

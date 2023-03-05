@@ -38,7 +38,13 @@ public:
     joint1.stepper.setSpeed(-500 * 2);
     joint2.stepper.setSpeed(-500 * 2 * movementLink);
 
-    while (digitalRead(joint1.EstopPin) != joint1.EstopOnState) { //Normal homing routine
+    while (true) { //Normal homing routine
+      if (digitalRead(joint1.EstopPin) == joint1.EstopOnState) { // Checks switch 2 times to counter interferance
+        delayMicroseconds(500);
+        if (digitalRead(joint1.EstopPin) == joint1.EstopOnState) {
+          break;
+        }
+      }
       joint1.stepper.runSpeed();
       joint2.stepper.runSpeed();
     }

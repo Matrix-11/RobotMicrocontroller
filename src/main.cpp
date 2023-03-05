@@ -1,4 +1,3 @@
-
 #include <Arduino.h>
 #include <jointClass.h>
 #include <multiJointClass.h>
@@ -27,7 +26,7 @@
 #define numChars 100
 #define moveListLength 30
 
-
+// Setup for all Steppermotors
 AccelStepper stepper0 = AccelStepper(1, 46, 48); //Ramps Z
 
 AccelStepper stepper1 = AccelStepper(1, 26, 28); //Ramps E0
@@ -35,13 +34,13 @@ AccelStepper stepper2 = AccelStepper(1, 36, 34); //Ramps E1
 
 AccelStepper stepper3 = AccelStepper(1, A0, A1); //Ramps X
 AccelStepper stepper4 = AccelStepper(1, A6, A7); //Ramps Y
-
+//
 Joint joint0(stepper0, 0, NEMAturn, Endstop0, 0, 88, 400, true, maxSpeedturn, false);
 
 Joint joint1(stepper1, 1, NEMAgeared, Endstop1, 1, 7, 180, false, maxSpeedgeared); 
-Joint joint2(stepper2, 2, NEMAgeared, Endstop2, 1, 2, 180, false, maxSpeedgeared);
+Joint joint2(stepper2, 2, NEMAgeared, Endstop2, 1, 0.75, 180, false, maxSpeedgeared); //Old offset 2
 
-Joint joint3(stepper3, 3, NEMAwrist, Endstop3, 1, 13, 180, true, maxSpeedwrist);
+Joint joint3(stepper3, 3, NEMAwrist, Endstop3, 1, 15.5, 180, true, maxSpeedwrist); //Old offset 13
 Joint joint4(stepper4, 4, NEMAwrist, Endstop4, 0, 0, 360, false, maxSpeedwrist);
 
 Joint  j[numSteppers] = {joint0, joint1, joint2, joint3, joint4};
@@ -50,31 +49,28 @@ Joint (&jointArray)[numSteppers] = j;
 
 MultiJoint mJoint1(jointArray[1], jointArray[2], -1); //Movement of Axis 1 has to be counteracted by Axis 2 
 DiffJoint mJoint3(jointArray[3], jointArray[4], 1); //Required by differential gearing for Axis 3 (tilt)
-//DiffJoint mJoint4(joint4, joint3, -1); //Required by differential gearing for Axis 4 (rotate)
 
-moveElement dummyElement;
-
-char receivedChars[numChars];
-char tempChars[numChars];        // temporary array for use when parsing
-
-moveElement newMove;
-int listFlag = 0; // state of moveList like paused, play, stop
-
-bool start = false;
+const byte numBytes = 32;
+byte receivedBytes[numBytes];
+uint16_t receivedInts[7];
+byte numReceived = 0;
 bool newData = false;
+//bool moveSuccess = true;
 
-float currentPos[numSteppers];
+//uint16_t currentPos[numSteppers];
+bool newMove = true;
+bool start = false;
 
 void homeAll() {
   mJoint1.homing();
   mJoint3.homing();
-  jointArray[2].homing(); //Becuase of funny pointer shit
+  jointArray[2].homing();
   jointArray[0].homing();
+  Serial.println("<1>");
 }
 
 void setup() {
 
- 
   Serial.begin(250000);
    while (start == false) { // wait for serial port to connect. Else programm wont start
     if (Serial.available()) {
@@ -83,11 +79,17 @@ void setup() {
       }
     }
   } 
+  pinMode(Endstop0, INPUT_PULLUP);
+  pinMode(Endstop1, INPUT_PULLUP);
+  pinMode(Endstop2, INPUT_PULLUP);
+  pinMode(Endstop3, INPUT_PULLUP);
+  pinMode(Endstop4, INPUT_PULLUP);
 
   pinMode(16, OUTPUT); //Output for Oszi
   pinMode(17, OUTPUT); //Output for Oszi
   pinMode(23, OUTPUT); //Output for Oszi
-  digitalWrite(16, LOW);
+  pinMode(32, OUTPUT); //Output to switch Valve
+  digitalWrite(32, HIGH);
   PORTH = PORTH & B11111110; //PIN17
   PORTA = PORTA & B11111101; //PIN23
 	//digitalWrite(9, HIGH); //Turn on fan
@@ -120,140 +122,109 @@ void setup() {
   //move(deg2, 500, jointArray);
   //move(deg3, 500, jointArray);
   //move(deg4, 500, jointArray);
+  //joint2.setOffset();
+  //mJoint3.setOffset();
   homeAll();
 }
 
-void recvWithStartEndMarkers() { //receives from Serial Buffer and puts it in String
-    static boolean recvInProgress = false;
-    static byte n = 0; //
-    byte startMarker = 0x3C;
-    byte endMarker = 0x3E;
-    byte rc;
- 
-  if (Serial.available() > 0) {
-    PORTH = PORTH | B00000001; //PIN 17
-    while (Serial.available() > 0 && newData == false) {
-        rc = Serial.read();
-
-        if (recvInProgress == true) {
-            if (rc != endMarker) {
-                receivedChars[n] = rc;
-                n++;
-                if (n >= numChars) { //
-                    n = numChars - 1;
+void recvBytes() { // recieves bytes and converts sets of 2 into ints
+    byte ndx = 0;
+    byte rb;
+    byte waste;
+    int j = 0;
+    if (Serial.available() >= 14) {
+      while (newData == false) {
+        rb = Serial.read();
+            if (ndx < 14) {
+                receivedBytes[ndx] = rb;
+                ndx++;
+                if (ndx >= numBytes) {
+                    ndx = numBytes - 1;
                 }
+                //Serial.println(rb);
             }
-            else {
-                receivedChars[n] = '\0'; // terminate the string
-                recvInProgress = false;
-                n = 0; //
+            if (ndx >= 14) {
+                waste = Serial.read();
+                receivedBytes[ndx] = '\0'; // terminate the string
+                numReceived = ndx;  // save the number for use when printing
+                //ndx = 0;
                 newData = true;
+                Serial.println(1);
             }
-        }
-
-        else if (rc == startMarker) {
-            recvInProgress = true;
-        }
-    }
-    PORTH = PORTH & B11111110;
-  }
-}
-
-void processData(char input[numChars]) { // gets position out of send message formatted like: J1:54,J2:45,J4:85
-
-  float receivedPos[numSteppers + 1];
-  int recievedSpeed = defaultSpeed;
-  char * strtokIndx; // this is used by strtok() as an index
-  char output[numChars];
-  char conversion[numChars];
-  int jointnum;
-  double checksum = 0;
-  bool newPos = false;
-  
-  strtokIndx = strtok(input, ":"); //Strtok returns pointer
-
-  while (strtokIndx != NULL) {
-
-    strcpy(output, strtokIndx); // Chars are copied into array
-
-    //Serial.print(output[0]);
-    //Serial.println(output[1]);
-
-    if (output[0] == 'J') { // J sets joint position
-      strtokIndx = strtok(NULL, ",");
-      jointnum = (int)(output[1]) - '0'; // Converts the 1 into the int of the ascii code if you then subtract the ascii code of 0 you get the real int
-      //jointnum -= 1; // -1 because joint 0 doesnt exist yet
-
-      receivedPos[jointnum] = atof(strtokIndx);
-      newPos = true;
-
-      checksum += receivedPos[jointnum];
-    }
-
-    if (output[0] == 'S') { // S sets speed of move
-      strtokIndx = strtok(NULL, ",");
-      recievedSpeed = atoi(strtokIndx);
-      //checksum += recievedSpeed;
-      newPos = true;
-    }
-
-    if (output[0] == 'C') { // C(ommand) for commands :P
-      strtokIndx = strtok(NULL, ",");
-      Serial.println(strtokIndx);
-      strcpy(conversion, strtokIndx);
-      //checksum += int(conversion[0]);
-      switch (conversion[0]) {
-
-        case 'H': // H(ome) homes all axis
-          homeAll();
-          break;
+        //Serial.println(ndx);
       }
     }
-    strtokIndx = strtok(NULL, ":");
-  } 
 
-  if (newPos == true) {
-    Serial.println("Recieved Position: ");
-    for (int n = 0; n < numSteppers; n++) {
-      Serial.print(receivedPos[n]);
+  if (newData == true) {
+    for (int i = 0; i < 14; i = i + 2) { // converts 2 Bytes into one int
+      receivedInts[j] = (receivedBytes[i] << 8) + receivedBytes[i+1];
+      Serial.print(receivedInts[j]);
       Serial.print(',');
+      j++;
     }
     Serial.println();
-    Serial.print("Recieved Speed: ");
-    Serial.println(recievedSpeed);
-
-    newMove.set(receivedPos, recievedSpeed);
-    newMove.written = true;
-  }
-
-  Serial.print("<C:");
-  Serial.print(checksum, 2); // Prints checksum to PC, PC will intervene if something went wrong
-  Serial.println(">");
-}
-
-void makeMove() {
-
-  if (newMove.written) {
-    move(newMove.position, newMove.speed, jointArray);
-    newMove.written = false;
+    //if (moveSuccess) {
+    Serial.println("<1>");
+    //}
+    //else {
+    //  Serial.println("<2>");
+    //}
   }
 }
 
-//void serialEvent(){
-// PORTA = PORTA | B00001000;
-//}
+void processData() {
+  int newPos[5];
+  bool matchSpeed = false;
+
+  if (bitRead(receivedBytes[13], 0) == 1) { // if first bit of the int is high
+    PORTC = PORTC & B11011111; // Turn on Valve (Pin32 low)
+  } else {
+    PORTC = PORTC | B00100000; // Turn off Valve (Pin32 high)
+  }
+
+  if (bitRead(receivedBytes[13], 1) == 1) { // if second bit of the int is high
+    homeAll();
+    return;
+  }
+
+  if (bitRead(receivedBytes[13], 2) == 1) { // if second bit of the int is high
+    matchSpeed = true;
+  }
+
+  for (int i = 0; i < 5; i++) {
+
+    //if (receivedInts[i] == currentPos[i]) { // checks if send position is the same as current postition
+    //  return;
+    //}
+    newPos[i] = receivedInts[i];
+  }
+
+  move(newPos, receivedInts[5], jointArray, matchSpeed); // moves robot with given position and speed
+}
 
 void loop() {
-  recvWithStartEndMarkers();
-  PORTA = PORTA | B00000010; //PIN23
+  recvBytes();
+  PORTA = PORTA | B00000010; //turn on PIN23
   //PORTA = PORTA & B11110111;
   if (newData == true) {
     //Serial.println("new Data!");
     //PORTA = PORTA | B00000010; //PIN23
-    processData(receivedChars);
+    processData();
     newData = false;
     //PORTA = PORTA & B11111101;
   }
-  makeMove();
-  PORTA = PORTA & B11111101;
+  PORTA = PORTA & B11111101; // turn off PIN23
+}
+
+
+void showNewData() {
+    if (newData == true) {
+        Serial.print("This just in... ");
+        for (byte n = 0; n < numReceived/2; n++) {
+            Serial.print(receivedInts[n]);
+            Serial.print(' ');
+        }
+        Serial.println();
+        newData = false;
+    }
 }

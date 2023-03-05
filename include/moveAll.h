@@ -21,9 +21,8 @@ float moveL3 = -1;
 //   jointArray[3] = j4;
 // }
 
-void move(float deg[numSteppers], int maxSpeed, Joint (&jointArray)[numSteppers], bool matchSpeed = false) {
+bool move(int pos[numSteppers], int maxSpeed, Joint (&jointArray)[numSteppers], bool matchSpeed = false) { // takes position as steps and not as degrees
 
-  long pos[numSteppers];
   long togo[numSteppers];
   int speed[numSteppers];
   int oldTogoj3 = 0; // pure amount to go for calc of rotaton move for j3 and j4
@@ -36,14 +35,13 @@ void move(float deg[numSteppers], int maxSpeed, Joint (&jointArray)[numSteppers]
       Serial.print("Not all axis homed! ");
       Serial.print("Joint:");
       Serial.println(jointArray[i].jointNum);
-      return;
+      return 0;
     }
     //Serial.println(jointArray[i].steps2deg(jointArray[i].stepper.currentPosition()));
-    pos[i] = jointArray[i].deg2steps(deg[i]); // converts degrees into steps for every stepper
 
     if (jointArray[i].validatePos(pos[i])) { // checks if position is in bounds
       Serial.println("Movement out of bounds");
-      return;
+      return 0;
     }
     togo[i] = pos[i] - jointArray[i].stepper.currentPosition();
   }
@@ -105,7 +103,7 @@ void move(float deg[numSteppers], int maxSpeed, Joint (&jointArray)[numSteppers]
   //digitalWrite(16, HIGH);
   PORTH = PORTH | B00000010;
   while (jointArray[0].stepper.distanceToGo() != 0 || jointArray[1].stepper.distanceToGo() != 0 || jointArray[2].stepper.distanceToGo() != 0 || jointArray[3].stepper.distanceToGo() != 0 || jointArray[4].stepper.distanceToGo() != 0) {
-
+    //Moving all steppers at once
     jointArray[0].stepper.runSpeedToPosition();
     jointArray[1].stepper.runSpeedToPosition();
     jointArray[2].stepper.runSpeedToPosition();
@@ -121,4 +119,5 @@ void move(float deg[numSteppers], int maxSpeed, Joint (&jointArray)[numSteppers]
   PORTH = PORTH & B11111101;
 
   Serial.println("Finished move");
+  return 1;
 }
